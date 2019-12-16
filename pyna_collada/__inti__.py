@@ -1,0 +1,1 @@
+import pyna_collada
