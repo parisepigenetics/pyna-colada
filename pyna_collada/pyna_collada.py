@@ -4,11 +4,14 @@
 
 __version__ = "0.0.0"
 
+import sys
 import argparse
+import copy
+import numpy as np
 import pandas as pd
 from straw import straw
 from joblib import Parallel, delayed
-#import juice
+import matplotlib.pyplot as plt
 
 
 def get_contacts_frame(optArgs, chrA, chrB):
@@ -33,13 +36,33 @@ def extract_contacts(optArgs, chrA, chromosomes):
     return(dict(zip(chromosomes, all_chrom_res)))
 
 
+def populate_gontacts_ofInterest(contacts, geneIntContacts, indexes):
+    """Main function for creating the data frame of contacts for the genes of interest.
+
+    """
+    for i in range(len(indexes)):
+        chrom1 = geneIntContacts.loc[indexes[i], "chr"].values[0]  # WTF is pandas .loc returning!!!!!!!
+        d = (chrom1, indexes[i][0], indexes[i][1])
+        for j in range(i, len(indexes)):
+            chrom2 = geneIntContacts.loc[indexes[j], "chr"].values[0]
+            r = (chrom2, indexes[j][0], indexes[j][1])
+            #print(d, r)
+            # Main condition that checkes in the flattened Hi-C map.
+            dfCx = contacts[chrom1][chrom2]
+            if (indexes[i][1], indexes[j][1]) in dfCx.index:
+                vc = dfCx.loc[(indexes[i][1], indexes[j][1])].values[0]
+                # Replace the value in the large data frame.
+                geneIntContacts.at[(indexes[i][0], indexes[i][1]), (indexes[j][0], indexes[j][1])] = vc
+
+
+
 parser = argparse.ArgumentParser(prog='pyna_collada', description='Blah blah', epilog="Authors: Costas Bouyioukos, 2019-2020, Universite de Paris et UMR7216.")
 parser.add_argument('infile', type=str, metavar="input_file", help='Filename (or path) of a hic file (NO option for STDIN).')
 #parser.add_argument("outfile", nargs='?', default='-', type=argparse.FileType('w'), metavar='output_file', help="Path to output FASTA file. (or STDOUT).")
-parser.add_argument('-n', '--normalisation', nargs="?", default='VC', metavar="Norm. meth.", type=str, help="Choise of a normalisation method from the Juice suite or straw (Default: VC).", dest="norm")
+parser.add_argument('-n', '--normalisation', nargs="?", default='VC_SQRT', metavar="Norm. meth.", type=str, help="Choise of a normalisation method from the Juice suite or straw (Default: VC).", dest="norm")
 parser.add_argument('-t', '--type', nargs="?", default='BP', metavar="Type", type=str, help="Choise of a measure (Default: BP).", dest="type")
-parser.add_argument('-b', '--bin-size', help="Seelction of the bin size of the hi-c map (i.e. resolution). (Default=25000).", type=int, default=25000, dest="binSize", metavar="Bin Size")
-parser.add_argument(-g, --gene-list, type=argparse.FileType('r'), default=None, dest="genesCoord", metavar="gene's coords", help="A list of genes (or genomic locations) of interest and their genomic coordinates. The full length of gene is considered here.")
+parser.add_argument('-b', '--bin-size', help="Seelction of the bin size of the hi-c map (i.e. resolution). (Default=25000).", type=int, default=50000, dest="binSize", metavar="Bin Size")
+parser.add_argument('-g', '--gene-list', type=argparse.FileType('r'), default=None, dest="genesCoord", metavar="gene's coords", help="A list of genes (or genomic locations) of interest and their genomic coordinates. The full length of gene is considered here.")
 parser.add_argument('-v', '--version', action='version', version='%(prog)s  v. {version}'.format(version=__version__))
 #TODO fix the argument ranges of accepted values form straw.
 #TODO arguments: Add argument for chromosomes/organism.
@@ -47,6 +70,10 @@ parser.add_argument('-v', '--version', action='version', version='%(prog)s  v. {
 
 # Parse the command line arguments.
 optArgs = parser.parse_args()
+# PROBLEM... have to delete from local namespace the texIO file object beacuse causes problems in the parelisation!!!
+gcfh = optArgs.genesCoord
+del optArgs.genesCoord
+
 
 chromosomes=["1","2","3","4","5","6","7","8","9","10","11","12","13","14","15","16","17","18","19","20","21","22","X","Y"]
 
@@ -56,3 +83,66 @@ chromosomes=["1","2"]
 contacts = {}
 for chrA in chromosomes:
     contacts[chrA] = extract_contacts(optArgs, chrA, chromosomes)
+
+# Read and parse the features coordinate file.
+gCoords = []
+with gcfh as fh:
+    next(fh)
+    for l in fh:
+        fields = l.split()
+        if fields[2] not in ["1", "2"]:
+            continue
+        # CAREFULL re-orienting genes to facilitate the analysis!!!
+        # as we do not care so much *for the moment* for gene orientation.
+        if fields[4] < fields[3]:
+            # Switch the start and end of a gene.
+            tmp = fields[3]
+            fields[3] = fields[4]
+            fields[4] = tmp
+        gCoords.append((fields[1], fields[2], fields[3], fields[4]))
+labels = ["name", "chr", "start", "stop"]
+geneCoords = pd.DataFrame.from_records(gCoords, columns = labels)
+# sort the data frame according to chromosome and gene start site.
+geneCoords.sort_values(['chr', 'start'], ascending=[True, True], inplace=True)
+geneCoords.reset_index(drop=True, inplace=True)
+
+# Find bins that overlap genes.
+intervals = []
+for i, row in geneCoords.iterrows():
+    startInt = int(row["start"]) // optArgs.binSize
+    stopInt = int(row["stop"]) // optArgs.binSize
+    interval = tuple([x*optArgs.binSize for x in range(startInt, stopInt + 1)])
+    intervals.append(interval)
+
+# Append the intervals into the data frame.
+geneCoords['intervals'] = intervals
+
+# Expand the intervals / coordinates data frame.
+multiIntervs = []
+for i, row in geneCoords.iterrows():
+    for j in row["intervals"]:
+        multiIntervs.append([row["name"], row["start"], row["stop"], row["chr"], j])
+labels = ["name", "start", "stop", "chr", "bin"]
+geneCoords = pd.DataFrame.from_records(multiIntervs, columns = labels)
+
+#print(geneCoords.tail(n=20))
+
+# Prebuild the data freme of the matrix of genes of interest.
+# zip the name-X-bin columns to create the index tuples for rows and columns.
+indexes = list(zip(geneCoords["name"], geneCoords["bin"]))
+# Build an empty data frame.
+geneIntContacts = pd.DataFrame(0, index=pd.MultiIndex.from_tuples(indexes), columns=pd.MultiIndex.from_tuples(indexes))
+geneIntContacts.insert(0, "stop", list(geneCoords["stop"]))
+geneIntContacts.insert(0, "start", list(geneCoords["start"]))
+geneIntContacts.insert(0, "chr", list(geneCoords["chr"]))
+#print(geneIntContacts.head())
+#print(geneIntContacts)
+
+# Main function to populate the data frame!
+populate_gontacts_ofInterest(contacts, geneIntContacts, indexes)
+
+print(geneIntContacts)
+mm = np.log(geneIntContacts.iloc[:,3:].replace(0, np.nan))
+mm.replace(np.nan, 0)
+plt.matshow(mm)
+plt.show()
