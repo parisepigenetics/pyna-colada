@@ -12,10 +12,11 @@ import pandas as pd
 from straw import straw
 from joblib import Parallel, delayed
 import matplotlib.pyplot as plt
+import seaborn as sns
 
 
 def get_contacts_frame(optArgs, chrA, chrB):
-    """Extract the confrom numba import njit, prangetact matrix in flat format from the .hic file and return a double indexed data frame with the contacts.
+    """Extract the contact matrix in flat format from the .hic file and return a double indexed data frame with the contacts.
 
     """
     chrA = "chr" + chrA
@@ -55,13 +56,12 @@ def populate_gontacts_ofInterest(contacts, geneIntContacts, indexes):
                 geneIntContacts.at[(indexes[i][0], indexes[i][1]), (indexes[j][0], indexes[j][1])] = vc
 
 
-
 parser = argparse.ArgumentParser(prog='pyna_collada', description='Blah blah', epilog="Authors: Costas Bouyioukos, 2019-2020, Universite de Paris et UMR7216.")
 parser.add_argument('infile', type=str, metavar="input_file", help='Filename (or path) of a hic file (NO option for STDIN).')
 #parser.add_argument("outfile", nargs='?', default='-', type=argparse.FileType('w'), metavar='output_file', help="Path to output FASTA file. (or STDOUT).")
-parser.add_argument('-n', '--normalisation', nargs="?", default='VC_SQRT', metavar="Norm. meth.", type=str, help="Choise of a normalisation method from the Juice suite or straw (Default: VC).", dest="norm")
+parser.add_argument('-n', '--normalisation', nargs="?", default='NONE', metavar="Norm. meth.", type=str, help="Choise of a normalisation method from the Juice suite or straw (One of VC, VC_SQRT, KR, Default: NONE).", dest="norm")
 parser.add_argument('-t', '--type', nargs="?", default='BP', metavar="Type", type=str, help="Choise of a measure (Default: BP).", dest="type")
-parser.add_argument('-b', '--bin-size', help="Seelction of the bin size of the hi-c map (i.e. resolution). (Default=25000).", type=int, default=50000, dest="binSize", metavar="Bin Size")
+parser.add_argument('-b', '--bin-size', help="Seelction of the bin size of the hi-c map (i.e. resolution). (Default=25000).", type=int, default=25000, dest="binSize", metavar="Bin Size")
 parser.add_argument('-g', '--gene-list', type=argparse.FileType('r'), default=None, dest="genesCoord", metavar="gene's coords", help="A list of genes (or genomic locations) of interest and their genomic coordinates. The full length of gene is considered here.")
 parser.add_argument('-v', '--version', action='version', version='%(prog)s  v. {version}'.format(version=__version__))
 #TODO fix the argument ranges of accepted values form straw.
@@ -73,7 +73,6 @@ optArgs = parser.parse_args()
 # PROBLEM... have to delete from local namespace the texIO file object beacuse causes problems in the parelisation!!!
 gcfh = optArgs.genesCoord
 del optArgs.genesCoord
-
 
 chromosomes=["1","2","3","4","5","6","7","8","9","10","11","12","13","14","15","16","17","18","19","20","21","22","X","Y"]
 
@@ -114,7 +113,8 @@ for i, row in geneCoords.iterrows():
     interval = tuple([x*optArgs.binSize for x in range(startInt, stopInt + 1)])
     intervals.append(interval)
 
-# Append the intervals into the data frame.
+# Append the intervals into the data frame.#sns.show()
+
 geneCoords['intervals'] = intervals
 
 # Expand the intervals / coordinates data frame.
@@ -141,8 +141,14 @@ geneIntContacts.insert(0, "chr", list(geneCoords["chr"]))
 # Main function to populate the data frame!
 populate_gontacts_ofInterest(contacts, geneIntContacts, indexes)
 
-print(geneIntContacts)
+#print(geneIntContacts)
 mm = np.log(geneIntContacts.iloc[:,3:].replace(0, np.nan))
 mm.replace(np.nan, 0)
-plt.matshow(mm)
+# Ploting
+# Setup
+sns.set(style="white")
+f, ax = plt.subplots(figsize=(13, 11))
+#cmap = sns.diverging_palette(220, 10, as_cmap=True)
+sns.color_palette(palette="OrRd")
+sns.heatmap(mm)
 plt.show()
