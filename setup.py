@@ -1,7 +1,7 @@
 from setuptools import setup
 
 setup(name='pyna_collada',
-      version='0.0.0',
+      version='0.1.1',
       description='A python tool to easy work with Hi-C hic files.',
       url='http://github.com/',
       author='Costas Bouyioukos',
