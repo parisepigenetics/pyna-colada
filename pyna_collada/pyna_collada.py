@@ -32,13 +32,13 @@ def get_contacts_frame(optArgs, chrA, chrB):
 def extract_contacts(optArgs, chrA, chromosomes):
     """The paralelisation wrapper of the whole extract process.
 
-    Works one chromosome at a time (i.e. it paralelises all the contacts beteen a given (chrA) and all the rest of the chromosoems.)
+    Works one chromosome at a time (i.e. it paralelises all the contacts beteen a given (chrA) and all the rest of the chromosomes.)
     """
     all_chrom_res = Parallel(n_jobs=-1, backend = "multiprocessing")(delayed(get_contacts_frame)(optArgs, chrA, chrB) for chrB in chromosomes)
     return(dict(zip(chromosomes, all_chrom_res)))
 
 
-def populate_gontacts_ofInterest(contacts, geneIntContacts, indexes):
+def populate_contacts_ofInterest(contacts, geneIntContacts, indexes):
     """Main function for creating the data frame of contacts for the genes of interest.
 
     """
@@ -59,16 +59,16 @@ def populate_gontacts_ofInterest(contacts, geneIntContacts, indexes):
 
 parser = argparse.ArgumentParser(prog='pyna_collada', description='Blah blah', epilog="Authors: Costas Bouyioukos, 2019-2020, Universite de Paris et UMR7216.")
 parser.add_argument('infile', type=str, metavar="input_file", help='Filename (or path) of a hic file (NO option for STDIN).')
-#parser.add_argument("outfile", nargs='?', default='-', type=argparse.FileType('w'), metavar='output_file', help="Path to output FASTA file. (or STDOUT).")
-parser.add_argument('-n', '--normalisation', nargs="?", default='NONE', metavar="Norm. meth.", type=str, help="Choise of a normalisation method from the Juice suite or straw (One of VC, VC_SQRT, KR, Default: NONE).", dest="norm")
-parser.add_argument('-t', '--type', nargs="?", default='BP', metavar="Type", type=str, help="Choise of a measure (Default: BP).", dest="type")
+parser.add_argument('outfile', type=str, metavar="figure_outfile", help='Filename (or path) of the resulted figure (NO option for STDOUT).')
 parser.add_argument('-b', '--bin-size', help="Seelction of the bin size of the hi-c map (i.e. resolution). (Default=25000).", type=int, default=25000, dest="binSize", metavar="Bin Size")
+parser.add_argument('-c', '--chromosomes', nargs='+', default='ALL', help="The number of chromosomes that we need to edxtract contacts. Deafult: ALL", metavar="chr_Number", dest="chr")
 parser.add_argument('-g', '--gene-list', type=argparse.FileType('r'), default=None, dest="genesCoord", metavar="gene's coords", help="A list of genes (or genomic locations) of interest and their genomic coordinates. The full length of gene is considered here.")
-parser.add_argument('-p', '--pickle-matrix', type=str, default="pickled_result.pic", dest="pickle", metavar="pickled file", help="A local file to sotre the resulting contect matrix. Temporary!")
+parser.add_argument('-n', '--normalisation', nargs="?", default='NONE', metavar="Norm. meth.", type=str, help="Choise of a normalisation method from the Juice suite or straw (One of VC, VC_SQRT, KR, Default: NONE).", dest="norm")
+parser.add_argument('-p', '--pickle-matrix', type=str, default="pickled_result.pic", dest="pickle", metavar="pickled file", help="A local file to sotre the resulting contacts matrix. Temporary!")
+parser.add_argument('-t', '--type', nargs="?", default='BP', metavar="Type", type=str, help="Choise of a measure (Default: BP).", dest="type")
 parser.add_argument('-v', '--version', action='version', version='%(prog)s  v. {version}'.format(version=__version__))
 #TODO fix the argument ranges of accepted values form straw.
-#TODO arguments: Add argument for chromosomes/organism.
-#
+#TODO arguments: Add argument for organism.
 
 # Parse the command line arguments.
 optArgs = parser.parse_args()
@@ -76,14 +76,14 @@ optArgs = parser.parse_args()
 gcfh = optArgs.genesCoord
 del optArgs.genesCoord
 
-chromosomes=["1","2","3","4","5","6","7","8","9","10","11","12","13","14","15","16","17","18","19","20","21","22","X","Y"]
+if optArgs.chr == 'ALL':
+    chromosomes = ["1","2","3","4","5","6","7","8","9","10","11","12","13","14","15","16","17","18","19","20","21","22","X","Y"]
+else :
+    chromosomes = optArgs.chr
 
-chromosomes=["1","2"]
 
 # Check if pickled file exists and load it, otherwise re-calculate.
 if os.path.isfile(optArgs.pickle):
-    #fc = open(optArgs.pickle, "rb")
-    #print(fc)
     mm = pd.read_pickle(optArgs.pickle)
 else:
     contacts = {}
@@ -95,7 +95,7 @@ else:
         next(fh)
         for l in fh:
             fields = l.split()
-            if fields[2] not in ["1", "2"]:
+            if fields[2] not in chromosomes:
                 continue
             # CAREFULL re-orienting genes to facilitate the analysis!!!
             # as we do not care so much *for the moment* for gene orientation.
@@ -107,7 +107,7 @@ else:
             gCoords.append((fields[1], fields[2], fields[3], fields[4]))
     labels = ["name", "chr", "start", "stop"]
     geneCoords = pd.DataFrame.from_records(gCoords, columns = labels)
-    # sort the data frame according to chromosome and gene start site.
+    # Sort the data frame according to chromosome and gene start site.
     geneCoords.sort_values(['chr', 'start'], ascending=[True, True], inplace=True)
     geneCoords.reset_index(drop=True, inplace=True)
     # Find bins that overlap genes.
@@ -126,8 +126,7 @@ else:
             multiIntervs.append([row["name"], row["start"], row["stop"], row["chr"], j])
     labels = ["name", "start", "stop", "chr", "bin"]
     geneCoords = pd.DataFrame.from_records(multiIntervs, columns = labels)
-    #print(geneCoords.tail(n=20))
-    # Prebuild the data freme of the matrix of genes of interest.
+    # Prebuild the data frame of the matrix of genes of interest.
     # zip the name-X-bin columns to create the index tuples for rows and columns.
     indexes = list(zip(geneCoords["name"], geneCoords["bin"]))
     # Build an empty data frame.
@@ -135,11 +134,8 @@ else:
     geneIntContacts.insert(0, "stop", list(geneCoords["stop"]))
     geneIntContacts.insert(0, "start", list(geneCoords["start"]))
     geneIntContacts.insert(0, "chr", list(geneCoords["chr"]))
-    #print(geneIntContacts.head())
-    #print(geneIntContacts)
     # Main function to populate the data frame!
-    populate_gontacts_ofInterest(contacts, geneIntContacts, indexes)
-    #print(geneIntContacts)
+    populate_contacts_ofInterest(contacts, geneIntContacts, indexes)
     mm = np.log(geneIntContacts.iloc[:,3:].replace(0, np.nan))
     mm.replace(np.nan, 0)
     mm.to_pickle(optArgs.pickle)
@@ -154,4 +150,4 @@ sns.heatmap(mm)
 mx = max(max(ax.get_ylim()), max(ax.get_xlim()))
 ax.set_ylim(mx, 0)
 ax.set_xlim(0, mx)
-plt.show()
+plt.savefig(optArgs.outfile)
