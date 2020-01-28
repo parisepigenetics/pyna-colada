@@ -7,6 +7,7 @@ __version__ = "0.1.1"
 import sys
 import argparse
 import copy
+import os.path
 import numpy as np
 import pandas as pd
 from straw import straw
@@ -63,6 +64,7 @@ parser.add_argument('-n', '--normalisation', nargs="?", default='NONE', metavar=
 parser.add_argument('-t', '--type', nargs="?", default='BP', metavar="Type", type=str, help="Choise of a measure (Default: BP).", dest="type")
 parser.add_argument('-b', '--bin-size', help="Seelction of the bin size of the hi-c map (i.e. resolution). (Default=25000).", type=int, default=25000, dest="binSize", metavar="Bin Size")
 parser.add_argument('-g', '--gene-list', type=argparse.FileType('r'), default=None, dest="genesCoord", metavar="gene's coords", help="A list of genes (or genomic locations) of interest and their genomic coordinates. The full length of gene is considered here.")
+parser.add_argument('-p', '--pickle-matrix', type=str, default="pickled_result.pic", dest="pickle", metavar="pickled file", help="A local file to sotre the resulting contect matrix. Temporary!")
 parser.add_argument('-v', '--version', action='version', version='%(prog)s  v. {version}'.format(version=__version__))
 #TODO fix the argument ranges of accepted values form straw.
 #TODO arguments: Add argument for chromosomes/organism.
@@ -78,72 +80,70 @@ chromosomes=["1","2","3","4","5","6","7","8","9","10","11","12","13","14","15","
 
 chromosomes=["1","2"]
 
-# Read the file and put results in a dictionary -> data frame structure.
-contacts = {}
-for chrA in chromosomes:
-    contacts[chrA] = extract_contacts(optArgs, chrA, chromosomes)
+# Check if pickled file exists and load it, otherwise re-calculate.
+if os.path.isfile(optArgs.pickle):
+    #fc = open(optArgs.pickle, "rb")
+    #print(fc)
+    mm = pd.read_pickle(optArgs.pickle)
+else:
+    contacts = {}
+    for chrA in chromosomes:
+        contacts[chrA] = extract_contacts(optArgs, chrA, chromosomes)
+    # Read and parse the features coordinate file.
+    gCoords = []
+    with gcfh as fh:
+        next(fh)
+        for l in fh:
+            fields = l.split()
+            if fields[2] not in ["1", "2"]:
+                continue
+            # CAREFULL re-orienting genes to facilitate the analysis!!!
+            # as we do not care so much *for the moment* for gene orientation.
+            if fields[4] < fields[3]:
+                # Switch the start and end of a gene.
+                tmp = fields[3]
+                fields[3] = fields[4]
+                fields[4] = tmp
+            gCoords.append((fields[1], fields[2], fields[3], fields[4]))
+    labels = ["name", "chr", "start", "stop"]
+    geneCoords = pd.DataFrame.from_records(gCoords, columns = labels)
+    # sort the data frame according to chromosome and gene start site.
+    geneCoords.sort_values(['chr', 'start'], ascending=[True, True], inplace=True)
+    geneCoords.reset_index(drop=True, inplace=True)
+    # Find bins that overlap genes.
+    intervals = []
+    for i, row in geneCoords.iterrows():
+        startInt = int(row["start"]) // optArgs.binSize
+        stopInt = int(row["stop"]) // optArgs.binSize
+        interval = tuple([x*optArgs.binSize for x in range(startInt, stopInt + 1)])
+        intervals.append(interval)
+    # Append the intervals into the data frame.#sns.show()
+    geneCoords['intervals'] = intervals
+    # Expand the intervals / coordinates data frame.
+    multiIntervs = []
+    for i, row in geneCoords.iterrows():
+        for j in row["intervals"]:
+            multiIntervs.append([row["name"], row["start"], row["stop"], row["chr"], j])
+    labels = ["name", "start", "stop", "chr", "bin"]
+    geneCoords = pd.DataFrame.from_records(multiIntervs, columns = labels)
+    #print(geneCoords.tail(n=20))
+    # Prebuild the data freme of the matrix of genes of interest.
+    # zip the name-X-bin columns to create the index tuples for rows and columns.
+    indexes = list(zip(geneCoords["name"], geneCoords["bin"]))
+    # Build an empty data frame.
+    geneIntContacts = pd.DataFrame(0, index=pd.MultiIndex.from_tuples(indexes), columns=pd.MultiIndex.from_tuples(indexes))
+    geneIntContacts.insert(0, "stop", list(geneCoords["stop"]))
+    geneIntContacts.insert(0, "start", list(geneCoords["start"]))
+    geneIntContacts.insert(0, "chr", list(geneCoords["chr"]))
+    #print(geneIntContacts.head())
+    #print(geneIntContacts)
+    # Main function to populate the data frame!
+    populate_gontacts_ofInterest(contacts, geneIntContacts, indexes)
+    #print(geneIntContacts)
+    mm = np.log(geneIntContacts.iloc[:,3:].replace(0, np.nan))
+    mm.replace(np.nan, 0)
+    mm.to_pickle(optArgs.pickle)
 
-# Read and parse the features coordinate file.
-gCoords = []
-with gcfh as fh:
-    next(fh)
-    for l in fh:
-        fields = l.split()
-        if fields[2] not in ["1", "2"]:
-            continue
-        # CAREFULL re-orienting genes to facilitate the analysis!!!
-        # as we do not care so much *for the moment* for gene orientation.
-        if fields[4] < fields[3]:
-            # Switch the start and end of a gene.
-            tmp = fields[3]
-            fields[3] = fields[4]
-            fields[4] = tmp
-        gCoords.append((fields[1], fields[2], fields[3], fields[4]))
-labels = ["name", "chr", "start", "stop"]
-geneCoords = pd.DataFrame.from_records(gCoords, columns = labels)
-# sort the data frame according to chromosome and gene start site.
-geneCoords.sort_values(['chr', 'start'], ascending=[True, True], inplace=True)
-geneCoords.reset_index(drop=True, inplace=True)
-
-# Find bins that overlap genes.
-intervals = []
-for i, row in geneCoords.iterrows():
-    startInt = int(row["start"]) // optArgs.binSize
-    stopInt = int(row["stop"]) // optArgs.binSize
-    interval = tuple([x*optArgs.binSize for x in range(startInt, stopInt + 1)])
-    intervals.append(interval)
-
-# Append the intervals into the data frame.#sns.show()
-
-geneCoords['intervals'] = intervals
-
-# Expand the intervals / coordinates data frame.
-multiIntervs = []
-for i, row in geneCoords.iterrows():
-    for j in row["intervals"]:
-        multiIntervs.append([row["name"], row["start"], row["stop"], row["chr"], j])
-labels = ["name", "start", "stop", "chr", "bin"]
-geneCoords = pd.DataFrame.from_records(multiIntervs, columns = labels)
-
-#print(geneCoords.tail(n=20))
-
-# Prebuild the data freme of the matrix of genes of interest.
-# zip the name-X-bin columns to create the index tuples for rows and columns.
-indexes = list(zip(geneCoords["name"], geneCoords["bin"]))
-# Build an empty data frame.
-geneIntContacts = pd.DataFrame(0, index=pd.MultiIndex.from_tuples(indexes), columns=pd.MultiIndex.from_tuples(indexes))
-geneIntContacts.insert(0, "stop", list(geneCoords["stop"]))
-geneIntContacts.insert(0, "start", list(geneCoords["start"]))
-geneIntContacts.insert(0, "chr", list(geneCoords["chr"]))
-#print(geneIntContacts.head())
-#print(geneIntContacts)
-
-# Main function to populate the data frame!
-populate_gontacts_ofInterest(contacts, geneIntContacts, indexes)
-
-#print(geneIntContacts)
-mm = np.log(geneIntContacts.iloc[:,3:].replace(0, np.nan))
-mm.replace(np.nan, 0)
 # Ploting
 # Setup
 sns.set(style="white")
@@ -151,4 +151,7 @@ f, ax = plt.subplots(figsize=(13, 11))
 #cmap = sns.diverging_palette(220, 10, as_cmap=True)
 sns.color_palette(palette="OrRd")
 sns.heatmap(mm)
+mx = max(max(ax.get_ylim()), max(ax.get_xlim()))
+ax.set_ylim(mx, 0)
+ax.set_xlim(0, mx)
 plt.show()
