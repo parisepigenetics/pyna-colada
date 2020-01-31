@@ -97,15 +97,15 @@ else:
             fields = l.split()
             if fields[2] not in chromosomes:
                 continue
-            # CAREFULL re-orienting genes to facilitate the analysis!!!
-            # as we do not care so much *for the moment* for gene orientation.
+            # CAREFULL re-orienting genes to facilitate the analysis!!! we do not care so much *for the moment* for gene orientation.
             if fields[4] < fields[3]:
                 # Switch the start and end of a gene.
                 tmp = fields[3]
                 fields[3] = fields[4]
                 fields[4] = tmp
-            gCoords.append((fields[1], fields[2], fields[3], fields[4]))
+            gCoords.append((fields[1], fields[2], int(fields[3]), int(fields[4])))
     labels = ["name", "chr", "start", "stop"]
+    # The genes of interest coordinates data frame
     geneCoords = pd.DataFrame.from_records(gCoords, columns = labels)
     # Sort the data frame according to chromosome and gene start site.
     geneCoords.sort_values(['chr', 'start'], ascending=[True, True], inplace=True)
