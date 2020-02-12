@@ -2,7 +2,7 @@
 """Blah
 """
 
-__version__ = "0.1.1"
+__version__ = "0.2.1"
 
 import sys
 import argparse
@@ -12,8 +12,8 @@ import numpy as np
 import pandas as pd
 from straw import straw
 from joblib import Parallel, delayed
-import matplotlib.pyplot as plt
-import seaborn as sns
+import plotly
+import plotly.graph_objects as go
 
 
 def get_contacts_frame(optArgs, chrA, chrB):
@@ -117,7 +117,7 @@ else:
         stopInt = int(row["stop"]) // optArgs.binSize
         interval = tuple([x*optArgs.binSize for x in range(startInt, stopInt + 1)])
         intervals.append(interval)
-    # Append the intervals into the data frame.#sns.show()
+    # Append the intervals into the data frame.
     geneCoords['intervals'] = intervals
     # Expand the intervals / coordinates data frame.
     multiIntervs = []
@@ -130,24 +130,42 @@ else:
     # zip the name-X-bin columns to create the index tuples for rows and columns.
     indexes = list(zip(geneCoords["name"], geneCoords["bin"]))
     # Build an empty data frame.
-    geneIntContacts = pd.DataFrame(0, index=pd.MultiIndex.from_tuples(indexes), columns=pd.MultiIndex.from_tuples(indexes))
+    geneIntContacts = pd.DataFrame(0, index = pd.MultiIndex.from_tuples(indexes), columns=pd.MultiIndex.from_tuples(indexes))
     geneIntContacts.insert(0, "stop", list(geneCoords["stop"]))
     geneIntContacts.insert(0, "start", list(geneCoords["start"]))
     geneIntContacts.insert(0, "chr", list(geneCoords["chr"]))
     # Main function to populate the data frame!
     populate_contacts_ofInterest(contacts, geneIntContacts, indexes)
-    mm = np.log(geneIntContacts.iloc[:,3:].replace(0, np.nan))
-    mm.replace(np.nan, 0)
+    #FIXME Check if we really need logs or not, for the moment we ude!
+    mm = np.log2(geneIntContacts.iloc[:,3:].replace(0, np.nan))
+    #mm = geneIntContacts.iloc[:,3:]
+    #mm = mm.replace(0, np.nan)
+    indexes2 = ["{}-{}".format(a, b) for a, b in zip(geneCoords["name"], geneCoords["bin"])]
+    mm.index = indexes2
+    mm.columns = indexes2
     mm.to_pickle(optArgs.pickle)
 
-# Ploting
+# Ploting with plotly
+# Transform pandas data frame to dictionatry for the plotly visualisation.
+ddMM = go.Heatmap(z = mm.to_numpy().tolist(), x = mm.index, y = mm.columns, hoverongaps = False)
+fig = go.Figure(data = ddMM)
+fig.update_layout(width = 1400, height = 1400)
+fig.update_yaxes(automargin=True)
+fig.update_xaxes(automargin=True)
+plotly.offline.plot(fig, filename = optArgs.outfile, auto_open = False)
+
+
+
+# Ploting SNS DEPRICATED
+#import matplotlib.pyplot as plt
+#import seaborn as sns
 # Setup
-sns.set(style="white")
-f, ax = plt.subplots(figsize=(13, 11))
-#cmap = sns.diverging_palette(220, 10, as_cmap=True)
-sns.color_palette(palette="OrRd")
-sns.heatmap(mm)
-mx = max(max(ax.get_ylim()), max(ax.get_xlim()))
-ax.set_ylim(mx, 0)
-ax.set_xlim(0, mx)
-plt.savefig(optArgs.outfile)
+# sns.set(style="white")
+# f, ax = plt.subplots(figsize=(13, 11))
+# #cmap = sns.diverging_palette(220, 10, as_cmap=True)
+# sns.color_palette(palette="OrRd")
+# sns.heatmap(mm)
+# mx = max(max(ax.get_ylim()), max(ax.get_xlim()))
+# ax.set_ylim(mx, 0)
+# ax.set_xlim(0, mx)
+# plt.savefig(optArgs.outfile)
