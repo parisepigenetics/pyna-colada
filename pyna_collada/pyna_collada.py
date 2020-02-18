@@ -48,7 +48,6 @@ def populate_contacts_ofInterest(contacts, geneIntContacts, indexes):
         for j in range(i, len(indexes)):
             chrom2 = geneIntContacts.loc[indexes[j], "chr"].values[0]
             r = (chrom2, indexes[j][0], indexes[j][1])
-            #print(d, r)
             # Main condition that checkes in the flattened Hi-C map.
             dfCx = contacts[chrom1][chrom2]
             if (indexes[i][1], indexes[j][1]) in dfCx.index:
@@ -60,9 +59,9 @@ def populate_contacts_ofInterest(contacts, geneIntContacts, indexes):
 parser = argparse.ArgumentParser(prog='pyna_collada', description='Blah blah', epilog="Authors: Costas Bouyioukos, 2019-2020, Universite de Paris et UMR7216.")
 parser.add_argument('infile', type=str, metavar="input_file", help='Filename (or path) of a hic file (NO option for STDIN).')
 parser.add_argument('outfile', type=str, metavar="figure_outfile", help='Filename (or path) of the resulted figure (NO option for STDOUT).')
-parser.add_argument('-b', '--bin-size', help="Seelction of the bin size of the hi-c map (i.e. resolution). (Default=25000).", type=int, default=25000, dest="binSize", metavar="Bin Size")
+parser.add_argument('-b', '--bin-size', help="Seelction of the bin size of the hi-c map (i.e. resolution). (Default=10000).", type=int, default=10000, dest="binSize", metavar="Bin Size")
 parser.add_argument('-c', '--chromosomes', nargs='+', default='ALL', help="The number of chromosomes that we need to edxtract contacts. Deafult: ALL", metavar="chr_Number", dest="chr")
-parser.add_argument('-g', '--gene-list', type=argparse.FileType('r'), default=None, dest="genesCoord", metavar="gene's coords", help="A list of genes (or genomic locations) of interest and their genomic coordinates. The full length of gene is considered here.")
+parser.add_argument('-g', '--gene-list', type=argparse.FileType('r'), default=None, dest="genesCoord", metavar="gene's coords", help="A list of genes (or genomic locations) of interest and their genomic coordinates.")
 parser.add_argument('-n', '--normalisation', nargs="?", default='NONE', metavar="Norm. meth.", type=str, help="Choise of a normalisation method from the Juice suite or straw (One of VC, VC_SQRT, KR, Default: NONE).", dest="norm")
 parser.add_argument('-p', '--pickle-matrix', type=str, default="pickled_result.pic", dest="pickle", metavar="pickled file", help="A local file to sotre the resulting contacts matrix. Temporary!")
 parser.add_argument('-t', '--type', nargs="?", default='BP', metavar="Type", type=str, help="Choise of a measure (Default: BP).", dest="type")
@@ -92,10 +91,10 @@ else:
     # Read and parse the features coordinate file.
     gCoords = []
     with gcfh as fh:
-        next(fh)
+        next(fh)  # If the file contains a header!
         for l in fh:
             fields = l.split()
-            if fields[2] not in chromosomes:
+            if fields[2] not in chromosomes:  #!!! Here we assume that the chromosome name is on the third column.
                 continue
             # CAREFULL re-orienting genes to facilitate the analysis!!! we do not care so much *for the moment* for gene orientation.
             if fields[4] < fields[3]:
@@ -103,7 +102,7 @@ else:
                 tmp = fields[3]
                 fields[3] = fields[4]
                 fields[4] = tmp
-            gCoords.append((fields[1], fields[2], int(fields[3]), int(fields[4])))
+            gCoords.append((fields[1], fields[2], int(fields[3]), int(fields[4])))  #!!! Here we assume the following column names ENSEMBL, GeneName, Chrom, GeneStart, GeneEnd OBLIGATORY!
     labels = ["name", "chr", "start", "stop"]
     # The genes of interest coordinates data frame
     geneCoords = pd.DataFrame.from_records(gCoords, columns = labels)
