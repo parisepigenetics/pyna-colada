@@ -2,7 +2,7 @@
 """Pyna collada is a tool that draws chromosome contacts of specific prespefied regions from a whole genome Hi-C .hic file chromosome map. Visulaises the resulting contact sub-matrices in interective html files.
 """
 
-__version__ = "0.3.0"
+__version__ = "0.3.1"
 
 # import sys
 import argparse
@@ -20,8 +20,9 @@ def get_contacts_frame(optArgs, chrA, chrB):
     """Extract the contact matrix in flat format from the .hic file and return a double indexed data frame with the contacts.
 
     """
-    chrA = "chr" + chrA
-    chrB = "chr" + chrB
+    chrAs = "Chr" + chrA
+    chrBs = "Chr" + chrB
+    #print(f'chr1 {chrAs} chr2 {chrBs}')
     res = straw(optArgs.norm, optArgs.infile, chrA, chrB, optArgs.type, optArgs.binSize)
     multi_index = pd.MultiIndex.from_tuples(tuples=list(zip(res[0], res[1])), names=["start", "stop"])
     cont = "contacts_" + chrA + "*" + chrB
@@ -63,10 +64,12 @@ def populate_contacts_ofInterest(contacts, geneIntContacts, indexes):
                 geneIntContacts.at[(indexes[i][0], indexes[i][1]), (indexes[j][0], indexes[j][1])] = vc
 
 
+# TODO fix the argument ranges of accepted values from straw.
+# TODO arguments: Add argument for organism.
 parser = argparse.ArgumentParser(
     prog="pyna_collada",
-    description="Blah blah",
-    epilog="Authors: Costas Bouyioukos, 2019-2020, Universite de Paris et UMR7216.",
+    description="Blah blah...",
+    epilog="Authors: Costas Bouyioukos, 2019-2021, Universite de Paris and UMR7216.",
 )
 parser.add_argument(
     "infile",
@@ -142,12 +145,11 @@ parser.add_argument(
     action="version",
     version="%(prog)s  v. {version}".format(version=__version__),
 )
-# TODO fix the argument ranges of accepted values form straw.
-# TODO arguments: Add argument for organism.
+
 
 # Parse the command line arguments.
 optArgs = parser.parse_args()
-# PROBLEM... have to delete from local namespace the texIO file object beacuse causes problems in the parelisation!!!
+# PROBLEM... had to delete from local namespace the texIO file object beacuse causes problems in the parallelisation!!!
 gcfh = optArgs.genesCoord
 del optArgs.genesCoord
 
@@ -160,6 +162,7 @@ else:
 # Check if pickled file exists and load it, otherwise re-calculate.
 if os.path.isfile(optArgs.pickle):
     mm = pd.read_pickle(optArgs.pickle)
+    print(f'Pickled file {optArgs.pickle} found, load hic data from that!')
 else:
     contacts = {}
     for chrA in chromosomes:
@@ -227,10 +230,16 @@ else:
     mm.to_pickle(optArgs.pickle)
 
 # Ploting with plotly
-# Transform pandas data frame to dictionatry for the plotly visualisation.
+# Transform pandas data frame to dictionary for the plotly visualisation.
 ddMM = go.Heatmap(z=mm.to_numpy().tolist(), x=mm.index, y=mm.columns, hoverongaps=False)
 fig = go.Figure(data=ddMM)
-fig.update_layout(width=1600, height=1600)
+fig.update_layout(width=1600, height=1600,
+                  title=f"Selection's contacts from chromosome {str(optArgs.chr[0])}",
+                  xaxis_title="Gene names/Coordinates", yaxis_title="Gene names coordinates",
+                  #legend_title="Normalised Contacts",
+                  font=dict(family="Courier New, monospace",
+                            size=14) # color="RebeccaPurple")
+                  )
 fig.update_yaxes(automargin=True)
 fig.update_xaxes(automargin=True)
 plotly.offline.plot(fig, filename=optArgs.outfile, auto_open=False)
