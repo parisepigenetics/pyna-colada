@@ -1,4 +1,6 @@
 pandas
-staw
-juice-tools
+numpy
+plotly
+hicstraw
+joblib
 parallel
