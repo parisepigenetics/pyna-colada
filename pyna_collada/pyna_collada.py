@@ -13,7 +13,7 @@ import pandas as pd
 from joblib import Parallel, delayed
 import plotly
 import plotly.graph_objects as go
-from straw import straw
+from hicstraw import straw
 
 
 def get_contacts_frame(optArgs, chrA, chrB):
