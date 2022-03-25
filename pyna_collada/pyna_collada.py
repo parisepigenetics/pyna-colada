@@ -2,7 +2,7 @@
 """Pyna collada is a tool that draws chromosome contacts of specific prespefied regions from a whole genome Hi-C .hic file chromosome map. Visulaises the resulting contact sub-matrices in interective html files.
 """
 
-__version__ = "0.3.1"
+__version__ = "0.5"
 
 # import sys
 import argparse
@@ -10,7 +10,7 @@ import math
 import os.path
 import numpy as np
 import pandas as pd
-from joblib import Parallel, delayed
+import multiprocessing as mp
 import plotly
 import plotly.graph_objects as go
 from hicstraw import straw
@@ -18,15 +18,14 @@ from hicstraw import straw
 
 def get_contacts_frame(optArgs, chrA, chrB):
     """Extract the contact matrix in flat format from the .hic file and return a double indexed data frame with the contacts.
-
     """
     chrAs = "Chr" + chrA
     chrBs = "Chr" + chrB
     #print(f'chr1 {chrAs} chr2 {chrBs}')
-    res = straw(optArgs.norm, optArgs.infile, chrA, chrB, optArgs.type, optArgs.binSize)
+    res = straw("observed", optArgs.norm, optArgs.infile, chrA, chrB, optArgs.type, optArgs.binSize)
     multi_index = pd.MultiIndex.from_tuples(tuples=list(zip(res[0], res[1])), names=["start", "stop"])
     cont = "contacts_" + chrA + "*" + chrB
-    dc = pd.DataFrame(data={cont: res[2]}, index=multi_index)
+    dc = pd.DataFrame(data={cont: res.counts}, index=multi_index)
     return dc
 
 
@@ -64,71 +63,76 @@ def populate_contacts_ofInterest(contacts, geneIntContacts, indexes):
                 geneIntContacts.at[(indexes[i][0], indexes[i][1]), (indexes[j][0], indexes[j][1])] = vc
 
 
+
 # TODO fix the argument ranges of accepted values from straw.
 # TODO arguments: Add argument for organism.
 parser = argparse.ArgumentParser(
     prog="pyna_collada",
-    description="Blah blah...",
-    epilog="Authors: Costas Bouyioukos, 2019-2021, Universite de Paris and UMR7216.",
-)
+    description="Tool to visualise Hi-C contacts from gene lists of interest.",
+    epilog="Authors: Costas Bouyioukos, 2019-2022, Universite Paris Cite and UMR7216.")
 parser.add_argument(
-    "infile",
+    "hic",
     type=str,
-    metavar="input_file",
-    help="Filename (or path) of a hic file (NO option for STDIN).",
-)
+    metavar="hic_file",
+    help="Filename (or path) of .hic file (NO option for STDIN)")
+parser.add_argument(
+    "genesAnnot",
+    type=argparse.FileType("r"),
+    default=None,
+    metavar="gene_annot_coords_file",
+    help="Filename (or path) of annotation file (usually from ENSEMBL) conaining at least the gene name, gene start and end, chromosome and strand")
 parser.add_argument(
     "outfile",
     type=str,
-    metavar="figure_outfile",
-    help="Filename (or path) of the resulted figure (NO option for STDOUT).",
-)
+    metavar="out_file",
+    help="Filename (or path) of the results .html figure file (NO option for STDOUT)")
 parser.add_argument(
     "-b",
     "--bin-size",
-    help="Seelction of the bin size of the hi-c map (i.e. resolution). (Default=10000).",
+    help="Seelction of the bin size of the hi-c map (i.e. resolution). Default=10000",
     type=int,
     default=10000,
     dest="binSize",
-    metavar="Bin Size",
-)
+    metavar="bin_size")
 parser.add_argument(
     "-c",
     "--chromosomes",
     nargs="+",
     default="ALL",
-    help="The number of chromosomes that we need to edxtract contacts. Deafult: ALL",
-    metavar="chr_Number",
-    dest="chr",
-)
+    help="The chromosome names(s) of which we want to extract contacts. Deafult: ALL",
+    metavar="chr_number",
+    dest="chr")
 parser.add_argument(
-    "-g",
-    "--gene-list",
-    type=argparse.FileType("r"),
-    default=None,
-    dest="genesCoord",
-    metavar="gene's coords",
-    help="A list of genes (or genomic locations) of interest and their genomic coordinates.",
-)
+    "-d",
+    "--downstream-offset",
+    type=int,
+    default=500,
+    help="The number of bps to offset down-stream of TSS for defining the overlaping regions. Default: 500",
+    metavar="downstream_off",
+    dest="offsetD")
+parser.add_argument(
+    "-u",
+    "--upstream-offset",
+    type=int,
+    default=1000,
+    help="The number of bps to offset up-stream of TSS for defining the overlaping regions. Default: 1000",
+    metavar="upstream_off",
+    dest="offsetU")
+parser.add_argument(
+    "-i",
+    "--interChromosomal",
+    action="store_true",
+    dest="inter",
+    help="Flag to turn on inter- and intra-chromosomal contacts. Default: intra-chromosomal only")
 parser.add_argument(
     "-n",
     "--normalisation",
     nargs="?",
     default="NONE",
-    metavar="Norm. meth.",
+    metavar="norm_meth",
     type=str,
-    help="Choise of a normalisation method from the Juice suite or straw (One of VC, VC_SQRT, KR, Default: NONE).",
-    dest="norm",
-)
-parser.add_argument(
-    "-p",
-    "--pickle-matrix",
-    type=str,
-    default="pickled_result.pic",
-    dest="pickle",
-    metavar="pickled file",
-    help="A local file to sotre the resulting contacts matrix. Temporary!",
-)
+    help="Choise of a normalisation method from the Juice-tools or hic-straw (One of VC, VC_SQRT, KR, Default: NONE)",
+    dest="norm")
 parser.add_argument(
     "-t",
     "--type",
@@ -136,98 +140,86 @@ parser.add_argument(
     default="BP",
     metavar="Type",
     type=str,
-    help="Choise of a measure (Default: BP).",
-    dest="type",
-)
+    help="Choise of the hic-straw extracted measure. Default: BP",
+    dest="type")
 parser.add_argument(
     "-v",
     "--version",
     action="version",
-    version="%(prog)s  v. {version}".format(version=__version__),
-)
+    version="%(prog)s  v. {version}".format(version=__version__))
 
 
 # Parse the command line arguments.
 optArgs = parser.parse_args()
-# PROBLEM... had to delete from local namespace the texIO file object beacuse causes problems in the parallelisation!!!
-gcfh = optArgs.genesCoord
-del optArgs.genesCoord
-
+exit()
 if optArgs.chr == "ALL":
     chromosomes = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15", "16", "17", "18", "19", "20", "21", "22", "X", "Y"]
 else:
     chromosomes = optArgs.chr
 
-
-# Check if pickled file exists and load it, otherwise re-calculate.
-if os.path.isfile(optArgs.pickle):
-    mm = pd.read_pickle(optArgs.pickle)
-    print(f'Pickled file {optArgs.pickle} found, load hic data from that!')
-else:
-    contacts = {}
-    for chrA in chromosomes:
-        contacts[chrA] = extract_contacts(optArgs, chrA, chromosomes)
-    # Read and parse the features coordinate file.
-    gCoords = []
-    with gcfh as fh:
-        next(fh)  # If the file contains a header!
-        for l in fh:
-            fields = l.split()
-            if (fields[2] not in chromosomes):  #!!! Here we assume that the chromosome name is on the third column.
-                continue
-            # CAREFULL re-orienting genes to facilitate the analysis!!! we do not care so much *for the moment* for gene orientation.
-            # if fields[4] < fields[3]:
-            #    # Switch the start and end of a gene.
-            #    tmp = fields[3]
-            #    fields[3] = fields[4]
-            #    fields[4] = tmp
-            gCoords.append((fields[1], fields[2], int(fields[3]), int(fields[4])))  #!!! Here we assume the following column names ENSEMBL, GeneName, Chrom, GeneStart, GeneEnd OBLIGATORY!
-    labels = ["name", "chr", "start", "stop"]
-    # The genes of interest coordinates data frame
-    geneCoords = pd.DataFrame.from_records(gCoords, columns=labels)
-    # Sort the data frame according to chromosome and gene start site.
-    geneCoords.sort_values(["chr", "start"], ascending=[True, True], inplace=True)
-    geneCoords.reset_index(drop=True, inplace=True)
-    # Find bins that overlap genes.
-    intervals = []
-    for i, row in geneCoords.iterrows():
-        startInt = int(row["start"]) // optArgs.binSize
-        stopInt = int(row["stop"]) // optArgs.binSize
-        interval = tuple([x * optArgs.binSize for x in range(startInt, stopInt + 1)])
-        intervals.append(interval)
-    # Append the intervals into the data frame.
-    geneCoords["intervals"] = intervals
-    # Expand the intervals / coordinates data frame.
-    multiIntervs = []
-    names = []
-    bins = []
-    for i, row in geneCoords.iterrows():
-        for j in row["intervals"]:
-            if (row["name"] not in names) and (j not in bins):
-                names.append(row["name"])
-                bins.append(j)
-                multiIntervs.append([row["name"], row["start"], row["stop"], row["chr"], j])
-    labels = ["name", "start", "stop", "chr", "bin"]
-    geneCoords = pd.DataFrame.from_records(multiIntervs, columns=labels)
-    # Prebuild the data frame of the matrix of genes of interest.
-    # zip the name-X-bin columns to create the index tuples for rows and columns.
-    indexes = list(zip(geneCoords["name"], geneCoords["bin"]))
-    # Build an empty data frame.
-    geneIntContacts = pd.DataFrame(0, index=pd.MultiIndex.from_tuples(indexes), columns=pd.MultiIndex.from_tuples(indexes))
-    geneIntContacts.insert(0, "stop", list(geneCoords["stop"]))
-    geneIntContacts.insert(0, "start", list(geneCoords["start"]))
-    geneIntContacts.insert(0, "chr", list(geneCoords["chr"]))
-    # Main function to populate the data frame!
-    populate_contacts_ofInterest(contacts, geneIntContacts, indexes)
-    # FIXME Check if we really need logs or not, for the moment we ude!
-    mm = np.log2(geneIntContacts.iloc[:, 3:].replace(0, np.nan))
-    mm = geneIntContacts.iloc[:, 3:].replace(0, np.nan)
-    # mm = geneIntContacts.iloc[:,3:]
-    # mm = mm.replace(0, np.nan)
-    indexes2 = ["{}-{}".format(a, b) for a, b in zip(geneCoords["name"], geneCoords["bin"])]
-    mm.index = indexes2
-    mm.columns = indexes2
-    mm.to_pickle(optArgs.pickle)
+# Compute the genes/contacts data frame
+contacts = {}
+for chrA in chromosomes:
+    contacts[chrA] = extract_contacts(optArgs, chrA, chromosomes)
+# Read and parse the features coordinate file.
+with optArgs.genesAnnot as fh:
+    next(fh)  # If the file contains a header!
+    for l in fh:
+        fields = l.split()
+        if (fields[2] not in chromosomes):  #!!! Here we assume that the chromosome name is on the third column.
+            continue
+        # CAREFULL re-orienting genes to facilitate the analysis!!! we do not care so much *for the moment* for gene orientation.
+        # if fields[4] < fields[3]:
+        #    # Switch the start and end of a gene.
+        #    tmp = fields[3]
+        #    fields[3] = fields[4]
+        #    fields[4] = tmp
+        coords.append((fields[1], fields[2], int(fields[3]), int(fields[4])))  #!!! Here we assume the following column names ENSEMBL, GeneName, Chrom, GeneStart, GeneEnd OBLIGATORY!
+labels = ["name", "chr", "start", "stop"]
+# The genes of interest coordinates data frame
+geneCoords = pd.DataFrame.from_records(gCoords, columns=labels)
+# Sort the data frame according to chromosome and gene start site
+geneCoords.sort_values(["chr", "start"], ascending=[True, True], inplace=True)
+geneCoords.reset_index(drop=True, inplace=True)
+# Find bins that overlap genes
+intervals = []
+for i, row in geneCoords.iterrows():
+    startInt = int(row["start"]) // optArgs.binSize
+    stopInt = int(row["stop"]) // optArgs.binSize
+    interval = tuple([x * optArgs.binSize for x in range(startInt, stopInt + 1)])
+    intervals.append(interval)
+# Append the intervals into the data frame
+geneCoords["intervals"] = intervals
+# Expand the intervals / coordinates data frame
+multiIntervs = []
+names = []
+bins = []
+for i, row in geneCoords.iterrows():
+    for j in row["intervals"]:
+        if (row["name"] not in names) and (j not in bins):
+            names.append(row["name"])
+            bins.append(j)
+            multiIntervs.append([row["name"], row["start"], row["stop"], row["chr"], j])
+labels = ["name", "start", "stop", "chr", "bin"]
+geneCoords = pd.DataFrame.from_records(multiIntervs, columns=labels)
+# Prebuild the data frame of the matrix of genes of interest
+# zip the name-X-bin columns to create the index tuples for rows and columns
+indexes = list(zip(geneCoords["name"], geneCoords["bin"]))
+# Build an empty data frame
+geneIntContacts = pd.DataFrame(0, index=pd.MultiIndex.from_tuples(indexes), columns=pd.MultiIndex.from_tuples(indexes))
+geneIntContacts.insert(0, "stop", list(geneCoords["stop"]))
+geneIntContacts.insert(0, "start", list(geneCoords["start"]))
+geneIntContacts.insert(0, "chr", list(geneCoords["chr"]))
+# Main function to populate the data frame!
+populate_contacts_ofInterest(contacts, geneIntContacts, indexes)
+# FIXME Check if we really need logs or not, for the moment we use!
+mm = np.log2(geneIntContacts.iloc[:, 3:].replace(0, np.nan))
+mm = geneIntContacts.iloc[:, 3:].replace(0, np.nan)
+# mm = geneIntContacts.iloc[:,3:]
+# mm = mm.replace(0, np.nan)
+indexes2 = ["{}-{}".format(a, b) for a, b in zip(geneCoords["name"], geneCoords["bin"])]
+mm.index = indexes2
+mm.columns = indexes2
 
 # Ploting with plotly
 # Transform pandas data frame to dictionary for the plotly visualisation.
@@ -243,6 +235,7 @@ fig.update_layout(width=1600, height=1600,
 fig.update_yaxes(automargin=True)
 fig.update_xaxes(automargin=True)
 plotly.offline.plot(fig, filename=optArgs.outfile, auto_open=False)
+
 
 
 # Ploting SNS DEPRICATED
