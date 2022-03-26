@@ -1,0 +1,2 @@
+include versioneer.py
+include pyna_collada/_version.py
