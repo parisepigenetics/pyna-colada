@@ -1,5 +1,6 @@
 import sys
-from setuptools import setup, find_packages
+import os
+from setuptools import setup, find_packages, Command
 import versioneer
 
 short_description = "pyna_collada.".split("\n")[0]
@@ -15,6 +16,17 @@ except:
     long_description = None
 
 
+class CleanCommand(Command):
+    """Custom clean command to tidy up the project root."""
+    user_options = []
+    def initialize_options(self):
+        pass
+    def finalize_options(self):
+        pass
+    def run(self):
+        os.system('rm -vrf ./__pycache__ ./build ./dist ./*.pyc ./*.tgz ./*.egg-info')
+
+
 setup(
     # Self-descriptive entries which should always be present
     name='pyna_collada',
@@ -24,7 +36,7 @@ setup(
     long_description=long_description,
     long_description_content_type="text/markdown",
     version=versioneer.get_version(),
-    cmdclass=versioneer.get_cmdclass(),
+    cmdclass={'clean': CleanCommand,},
     license='LGPLv3',
     # Which Python importable modules should be included when your package is installed
     # Handled automatically by setuptools. Use 'exclude' to prevent some specific
