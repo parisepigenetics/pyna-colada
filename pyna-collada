@@ -3,28 +3,31 @@
 """Pyna-collada is a tool that draws chromosome contacts of specific pre-specified regions from a whole genome Hi-C .hic file chromosome map. Visualises the resulting contact sub-matrices in interactive html files.
 """
 
+#__version__ = "0.5"
 
 import argparse
 import plotly
 import plotly.graph_objects as go
+import hicstraw
+
+import pyna_collada as pc
 
 # TODO fix the argument ranges of accepted values from straw.
 # TODO arguments: Add argument for organism.
 parser = argparse.ArgumentParser(
     prog="pyna_collada",
-    description="Tool to visualise Hi-C contacts from gene lists of interest.",
+    description="Tool to visualise Hi-C contacts from an annotated gene list of interest.",
     epilog="Authors: Costas Bouyioukos, 2019-2022, Universite Paris Cite and UMR7216.")
 parser.add_argument(
-    "hic",
+    "hicFile",
     type=str,
     metavar="hic_file",
     help="Filename (or path) of .hic file (NO option for STDIN)")
 parser.add_argument(
     "genesAnnot",
-    type=argparse.FileType("r"),
-    default=None,
+    type=str,  #argparse.FileType("r"),
     metavar="gene_annot_coords_file",
-    help="Filename (or path) of annotation file (usually from ENSEMBL) conaining at least the gene name, gene start and end, chromosome and strand")
+    help="Filename (or path) of annotation file (usually from ENSEMBL) containing at least the gene name, gene start and end, chromosome and strand")
 parser.add_argument(
     "outfile",
     type=str,
@@ -42,9 +45,10 @@ parser.add_argument(
     "-c",
     "--chromosomes",
     nargs="+",
-    default="ALL",
-    help="The chromosome names(s) of which we want to extract contacts. Deafult: ALL",
-    metavar="chr_number",
+    type=int,
+    default=1,
+    help="The chromosome index(es) of which we want to extract contacts. Deafult: 1 (corresponds to the first chromosome in the hic file)",
+    metavar="chr_index",
     dest="chr")
 parser.add_argument(
     "-d",
@@ -90,14 +94,64 @@ parser.add_argument(
     "-v",
     "--version",
     action="version",
-    version="%(prog)s  v. {version}".format(version=__version__))
+    version=0.5)
 
 
-# Parse the command line arguments.
+# Parse the command line arguments
 optArgs = parser.parse_args()
-if optArgs.chr == "ALL":
-    chromosomes = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15", "16", "17", "18", "19", "20", "21", "22", "X", "Y"]
-else:
-    chromosomes = optArgs.chr
 
-exit()
+# Sort out the options selection for chromosomes and resolution by interogating the HiC file
+hic = hicstraw.HiCFile(optArgs.hicFile)
+# Get a list of chromosome names
+if isinstance(optArgs.chr, int):
+    chromNames =  [hic.getChromosomes()[optArgs.chr].name]
+else:
+    chromNames = [hic.getChromosomes()[i].name for i in optArgs.chr]
+# Check resolution consistency
+resolutions = hic.getResolutions()
+if optArgs.binSize not in resolutions:
+    raise ValueError(f"Selected bin size {optArgs.binSize} not included in supported hic file resolutions {resolutions}")
+
+# Parse annotation file
+ga = pc.parse_annotation(optArgs)
+
+# Calculate the interaction intervals
+gaExp = pc.expand_gene_annotation_bins(ga, optArgs)
+
+#print(gaExp)
+
+# Extract the contacts data from HiC file
+contacts = {}
+for i in range(len(chromNames)):
+    chrA = chromNames[i]
+    contacts[chrA] = {}
+    if optArgs.inter:  # Get also the inter-chromosomal contacts
+        for j in range(i, len(chromNames)):
+            chrB = chromNames[j]
+            contacts[chrA][chrB] = pc.get_contacts_frame(optArgs, chrA, chrB)
+    else:
+        chrB = chrA
+        contacts[chrA][chrB] = pc.get_contacts_frame(optArgs, chrA, chrB)
+# TODO the above loops will need to be parallelised for future versions
+
+#print(contacts)
+
+# Main function to populate the data frame
+geneIntContacts = pc.populate_contacts_ofInterest(contacts, gaExp)
+
+#print(geneIntContacts[0])
+
+# Ploting with plotly
+# Transform pandas data frame to dictionary for the plotly visualisation
+ddMM = go.Heatmap(z=geneIntContacts[0].to_numpy().tolist(), x=geneIntContacts[0].index, y=geneIntContacts[0].columns, hoverongaps=False)
+fig = go.Figure(data=ddMM)
+fig.update_layout(width=1200, height=1200,
+                  title=f"Selection's contacts from chromosome {chromNames[0]}",
+                  xaxis_title="Gene name - Coordinates", yaxis_title="Gene name - coordinates",
+                  #legend_title="Normalised Contacts",
+                  font=dict(family="Droid Sans", size=14)
+                  )
+fig.update_yaxes(automargin=True)
+fig.update_xaxes(automargin=True)
+plotly.offline.plot(fig, filename=optArgs.outfile, auto_open=False)
+# TODO TODO! deal properly with multiple chromosomes and report more than one outfiles.
