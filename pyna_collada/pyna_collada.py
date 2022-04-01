@@ -1,240 +1,170 @@
-#!/usr/bin/python3
-"""Pyna collada is a tool that draws chromosome contacts of specific prespefied regions from a whole genome Hi-C .hic file chromosome map. Visulaises the resulting contact sub-matrices in interective html files.
+"""Modle to facilitate hic contacts extraction and visualisation.
 """
 
-__version__ = "0.5"
-
-# import sys
-import argparse
 import math
-import os.path
 import numpy as np
 import pandas as pd
 import multiprocessing as mp
-import plotly
-import plotly.graph_objects as go
 from hicstraw import straw
 
+import time    # for timing
+import pprint  # for testing
 
-def get_contacts_frame(optArgs, chrA, chrB):
-    """Extract the contact matrix in flat format from the .hic file and return a double indexed data frame with the contacts.
+def timing(f):
+    """Wrapper to time functions.py
+
+    Works as a decorator. Taken from https://stackoverflow.com/questions/5478351/python-time-measure-function
     """
-    chrAs = "Chr" + chrA
-    chrBs = "Chr" + chrB
-    #print(f'chr1 {chrAs} chr2 {chrBs}')
-    res = straw("observed", optArgs.norm, optArgs.infile, chrA, chrB, optArgs.type, optArgs.binSize)
-    multi_index = pd.MultiIndex.from_tuples(tuples=list(zip(res[0], res[1])), names=["start", "stop"])
-    cont = "contacts_" + chrA + "*" + chrB
-    dc = pd.DataFrame(data={cont: res.counts}, index=multi_index)
+    def wrap(*args):
+        time1 = time.time()
+        ret = f(*args)
+        time2 = time.time()
+        print("{:s} function took {:.3f} ms".format(f.__name__, (time2 - time1) * 1000.0))
+        return ret
+    return wrap
+
+
+def parse_annotation(optArgs):
+    """Extract annotation, compute gene start site and overalp intervals
+
+    :param annotFile: An ENSEMBL annotation file with (at least) gene name, gene start and end sites and strand
+    :type annotFile: An open ready to read filehandler
+    :return: A pandas data frame with the ENSEMBL ids as row names and gene common name, begin, end of interaction sites as columns
+    :rtype: pandas.DataFrame
+    """
+    # TODO for future release... fetch these annotations from ENSEMBL online API
+    # Read and parse the features coordinate file
+    ga = pd.read_csv(optArgs.genesAnnot, delimiter='\t', low_memory=False)
+    # Setting up the index
+    idx = list(ga.loc[:,"Gene_stable_ID"].values)
+    #ga.index = idx  # No need to change the index perhaps TODO re-check it later in the production
+    #ga = ga.drop("Gene_stable_ID", axis=1)
+    # TODO do some post-checking for NaNs in strad, chromosome and gene start coords
+    # Calculate the overlaping intervals
+    # Get the positive strand indexes
+    ipos = ga[ga["Strand"]==1].index.tolist()
+    # Getting the negative strand indexes2
+    ineg = ga[ga["Strand"]==-1].index.tolist()
+    # Calculate the overlaping intervals based on gene start strand and the up- and down- offsets
+    ga.loc[ipos, "InterStart"] = ga.loc[ipos, "Gene_start"] - optArgs.offsetU
+    ga.loc[ipos, "InterEnd"] = ga.loc[ipos, "Gene_start"] + optArgs.offsetD
+    ga.loc[ineg, "InterStart"] = ga.loc[ineg, "Gene_end"] - optArgs.offsetD
+    ga.loc[ineg, "InterEnd"] = ga.loc[ineg, "Gene_end"] + optArgs.offsetU
+    # Calculate the corresponding interacting bins
+    ga.loc[:,"BinStart"] = round(ga.loc[:,"InterStart"] / optArgs.binSize) * optArgs.binSize
+    ga.loc[:,"BinEnd"] = round(ga.loc[:,"InterEnd"] / optArgs.binSize) * optArgs.binSize
+    # Covert the boundaries to integers
+    ga = ga.astype({"InterStart" : int, "InterEnd" : int, "BinStart" : int, "BinEnd" : int})
+    # Sort the data frame according to chromosome and interaction region start "InterStart"
+    ga.sort_values(["Chromosome", "InterStart"], ascending=[True, True], inplace=True)
+    ga.reset_index(inplace=True, drop=True)
+    return ga
+
+
+def expand_gene_annotation_bins(gadf, optArgs):
+    """Expandds the multiple intervals per gene or the multiple genes per interval.
+
+    Takes the genee annotation data frame from parse_annotation and expands the intervals such that the many-to-many relations between genes and HiC bins become one-to-one (with mupliple genes per bin if it is necessary).
+    :param gadf: A gene annotation pandas data frame which contains the interaction region of interest for each gene as columns names "InterStart" and "InterEnd".
+    :type gadf: pandas.DataFrame
+    :return: A pandas Dataframe with the intervals (i.e. HiC file bins) for each gene, multi-indexed by chromosome-/-gene.
+    :rtype: pandas.DataFrame
+    """
+    # Get the chromosomes
+    chroms_DFs = []
+    chroms = set(gadf["Chromosome"].values.tolist())
+    for chr in chroms:
+        # Generate an empty sub-DataFrame for the chromosome
+        chrDF = pd.DataFrame()
+        # Get the chomosome slice form the original DataFrame
+        gaSlice = gadf.loc[gadf["Chromosome"]==chr, :]
+        # Iterrate over rows
+        for i, row in gaSlice.iterrows():
+            # Set the condition to generate the expanded rows per gene over an interval
+            binTemp = row["BinStart"]
+            while binTemp <= row["BinEnd"]:  # This while loop produces the expansion!
+                adds = pd.Series({"BinPlot" : binTemp, "GenePlot" : row["Gene_name"]})
+                newRow = pd.concat([row, adds])
+                chrDF = pd.concat([chrDF, newRow.to_frame().T])
+                binTemp = binTemp + optArgs.binSize
+        chroms_DFs.append(chrDF)
+    # Collect all the chromosomes DFs in one
+    gaexp = pd.concat(chroms_DFs)
+    # Sort it out and reset the index
+    gaexp.sort_values(["Chromosome", "InterStart"], ascending=[True, True], inplace=True)
+    gaexp.reset_index(inplace=True, drop=True)
+    return gaexp
+
+
+@timing
+def get_contacts_frame(optArgs, chrA, chrB):
+    """Extract the contact matrix from a .hic fle using the straw interface.
+
+    :return: A double indexed (chromosomes-/-bins) data frame with the contacts.
+    :rtype: pandas.DataFrame
+    """
+    res = straw("observed", optArgs.norm, optArgs.hicFile, chrA, chrB, optArgs.type, optArgs.binSize)
+    # The new API of hicstraw returns a list of contactRecord objects so we extract the bins and counts by list comprehension
+    data = [(r.binX, r.binY, r.counts) for r in res]
+    cont = "counts_" + chrA + "x" + chrB + "_" + "Norm" + optArgs.norm
+    dc = pd.DataFrame(data=data, columns=["binX", "binY", cont])
+    dc = dc.set_index(["binX", "binY"])
     return dc
 
 
 def extract_contacts(optArgs, chrA, chromosomes):
-    """The paralelisation wrapper of the whole extract process.
+    """The paralelisation wrapper of the contacts extract process.Η μπρο­σού­ρα της Αλε­ξάν­δρα Κολ­λο­ντάι (1872–1952) «Κομ­μου­νι­σμός και Οικο­γέ­νεια» πρω­το­δη­μο­σιεύ­θη­κε το 1920. Το κεί­με­νο που ακο­λου­θεί, μαζί με την Εισα­γω­γή, είναι από την ομώ­νυ­μη μπρο­σού­ρα των εκδό­σε­ων «Λάβα» του 1974, που έχει εξαντληθεί.
 
-    Works one chromosome at a time (i.e. it paralelises all the contacts beteen a given (chrA) and all the rest of the chromosomes.)
+
+
+    Works one chromosome at a time: i.e. it paralelises all the contacts beteen all the chromosome pairs in the user defined list of input.
     """
-    all_chrom_res = Parallel(n_jobs=-1, backend="multiprocessing")(delayed(get_contacts_frame)(optArgs, chrA, chrB) for chrB in chromosomes)
-    return dict(zip(chromosomes, all_chrom_res))
+    # NOT IN USE AS THE TOOL WORKS WITH A SINGLE CHROMOSOME AT A TIME FOR THE moment
+    # TODO to be developed as a prrallelisation function IFF the tool is expanded to visualise many cromosomes.
+    pass
 
-
-def populate_contacts_ofInterest(contacts, geneIntContacts, indexes):
+@timing
+def populate_contacts_ofInterest(contacts, gaExpDf):
     """Main function for creating the data frame of contacts for the genes of interest.
 
-    contacts: A dictionary of all chromosome contacts.
-    geneIntContacts: A data frame of empty gene contacts.
-    indexes: A list og gene position tuples.
+    :param contacts: A dictionary of chromosome of chromosomes contacts.
+    :type contacts: dict
+    :param gaExpDf: The expanded gene annotation data frame.
+    :type gaExpDf: pandas.DataFrame
+    :return: A list of pandas DataFrames with the contacts of interest.
+    :rtype: list of pandas.DataFrame
     """
-    # geneIntContacts = geneIntContacts[~geneIntContacts.index.duplicated()]
-    # geneIntContacts = geneIntContacts.loc[:,~geneIntContacts.columns.duplicated()]
-    for i in range(len(indexes)):
-        chrom1 = geneIntContacts.loc[indexes[i], "chr"].values[0]  # WTF is pandas .loc returning!!!!!!!
-        # d = (chrom1, indexes[i][0], indexes[i][1])
-        for j in range(i, len(indexes)):
-            chrom2 = geneIntContacts.loc[indexes[j], "chr"].values[0]
-            # r = (chrom2, indexes[j][0], indexes[j][1])
-            dfCx = contacts[chrom1][chrom2]
-            # Main condition that checkes in the flattened Hi-C map.
-            if (indexes[i][1], indexes[j][1]) in dfCx.index:
-                vc = dfCx.loc[(indexes[i][1], indexes[j][1])].values[0]
-                if math.isnan(vc):
-                    vc = 0.0
-                # Replace the value in the large data frame.
-                geneIntContacts.at[(indexes[i][0], indexes[i][1]), (indexes[j][0], indexes[j][1])] = vc
-
-
-
-# TODO fix the argument ranges of accepted values from straw.
-# TODO arguments: Add argument for organism.
-parser = argparse.ArgumentParser(
-    prog="pyna_collada",
-    description="Tool to visualise Hi-C contacts from gene lists of interest.",
-    epilog="Authors: Costas Bouyioukos, 2019-2022, Universite Paris Cite and UMR7216.")
-parser.add_argument(
-    "hic",
-    type=str,
-    metavar="hic_file",
-    help="Filename (or path) of .hic file (NO option for STDIN)")
-parser.add_argument(
-    "genesAnnot",
-    type=argparse.FileType("r"),
-    default=None,
-    metavar="gene_annot_coords_file",
-    help="Filename (or path) of annotation file (usually from ENSEMBL) conaining at least the gene name, gene start and end, chromosome and strand")
-parser.add_argument(
-    "outfile",
-    type=str,
-    metavar="out_file",
-    help="Filename (or path) of the results .html figure file (NO option for STDOUT)")
-parser.add_argument(
-    "-b",
-    "--bin-size",
-    help="Seelction of the bin size of the hi-c map (i.e. resolution). Default=10000",
-    type=int,
-    default=10000,
-    dest="binSize",
-    metavar="bin_size")
-parser.add_argument(
-    "-c",
-    "--chromosomes",
-    nargs="+",
-    default="ALL",
-    help="The chromosome names(s) of which we want to extract contacts. Deafult: ALL",
-    metavar="chr_number",
-    dest="chr")
-parser.add_argument(
-    "-d",
-    "--downstream-offset",
-    type=int,
-    default=500,
-    help="The number of bps to offset down-stream of TSS for defining the overlaping regions. Default: 500",
-    metavar="downstream_off",
-    dest="offsetD")
-parser.add_argument(
-    "-u",
-    "--upstream-offset",
-    type=int,
-    default=1000,
-    help="The number of bps to offset up-stream of TSS for defining the overlaping regions. Default: 1000",
-    metavar="upstream_off",
-    dest="offsetU")
-parser.add_argument(
-    "-i",
-    "--interChromosomal",
-    action="store_true",
-    dest="inter",
-    help="Flag to turn on inter- and intra-chromosomal contacts. Default: intra-chromosomal only")
-parser.add_argument(
-    "-n",
-    "--normalisation",
-    nargs="?",
-    default="NONE",
-    metavar="norm_meth",
-    type=str,
-    help="Choise of a normalisation method from the Juice-tools or hic-straw (One of VC, VC_SQRT, KR, Default: NONE)",
-    dest="norm")
-parser.add_argument(
-    "-t",
-    "--type",
-    nargs="?",
-    default="BP",
-    metavar="Type",
-    type=str,
-    help="Choise of the hic-straw extracted measure. Default: BP",
-    dest="type")
-parser.add_argument(
-    "-v",
-    "--version",
-    action="version",
-    version="%(prog)s  v. {version}".format(version=__version__))
-
-
-# Parse the command line arguments.
-optArgs = parser.parse_args()
-exit()
-if optArgs.chr == "ALL":
-    chromosomes = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15", "16", "17", "18", "19", "20", "21", "22", "X", "Y"]
-else:
-    chromosomes = optArgs.chr
-
-# Compute the genes/contacts data frame
-contacts = {}
-for chrA in chromosomes:
-    contacts[chrA] = extract_contacts(optArgs, chrA, chromosomes)
-# Read and parse the features coordinate file.
-with optArgs.genesAnnot as fh:
-    next(fh)  # If the file contains a header!
-    for l in fh:
-        fields = l.split()
-        if (fields[2] not in chromosomes):  #!!! Here we assume that the chromosome name is on the third column.
-            continue
-        # CAREFULL re-orienting genes to facilitate the analysis!!! we do not care so much *for the moment* for gene orientation.
-        # if fields[4] < fields[3]:
-        #    # Switch the start and end of a gene.
-        #    tmp = fields[3]
-        #    fields[3] = fields[4]
-        #    fields[4] = tmp
-        coords.append((fields[1], fields[2], int(fields[3]), int(fields[4])))  #!!! Here we assume the following column names ENSEMBL, GeneName, Chrom, GeneStart, GeneEnd OBLIGATORY!
-labels = ["name", "chr", "start", "stop"]
-# The genes of interest coordinates data frame
-geneCoords = pd.DataFrame.from_records(gCoords, columns=labels)
-# Sort the data frame according to chromosome and gene start site
-geneCoords.sort_values(["chr", "start"], ascending=[True, True], inplace=True)
-geneCoords.reset_index(drop=True, inplace=True)
-# Find bins that overlap genes
-intervals = []
-for i, row in geneCoords.iterrows():
-    startInt = int(row["start"]) // optArgs.binSize
-    stopInt = int(row["stop"]) // optArgs.binSize
-    interval = tuple([x * optArgs.binSize for x in range(startInt, stopInt + 1)])
-    intervals.append(interval)
-# Append the intervals into the data frame
-geneCoords["intervals"] = intervals
-# Expand the intervals / coordinates data frame
-multiIntervs = []
-names = []
-bins = []
-for i, row in geneCoords.iterrows():
-    for j in row["intervals"]:
-        if (row["name"] not in names) and (j not in bins):
-            names.append(row["name"])
-            bins.append(j)
-            multiIntervs.append([row["name"], row["start"], row["stop"], row["chr"], j])
-labels = ["name", "start", "stop", "chr", "bin"]
-geneCoords = pd.DataFrame.from_records(multiIntervs, columns=labels)
-# Prebuild the data frame of the matrix of genes of interest
-# zip the name-X-bin columns to create the index tuples for rows and columns
-indexes = list(zip(geneCoords["name"], geneCoords["bin"]))
-# Build an empty data frame
-geneIntContacts = pd.DataFrame(0, index=pd.MultiIndex.from_tuples(indexes), columns=pd.MultiIndex.from_tuples(indexes))
-geneIntContacts.insert(0, "stop", list(geneCoords["stop"]))
-geneIntContacts.insert(0, "start", list(geneCoords["start"]))
-geneIntContacts.insert(0, "chr", list(geneCoords["chr"]))
-# Main function to populate the data frame!
-populate_contacts_ofInterest(contacts, geneIntContacts, indexes)
-# FIXME Check if we really need logs or not, for the moment we use!
-mm = np.log2(geneIntContacts.iloc[:, 3:].replace(0, np.nan))
-mm = geneIntContacts.iloc[:, 3:].replace(0, np.nan)
-# mm = geneIntContacts.iloc[:,3:]
-# mm = mm.replace(0, np.nan)
-indexes2 = ["{}-{}".format(a, b) for a, b in zip(geneCoords["name"], geneCoords["bin"])]
-mm.index = indexes2
-mm.columns = indexes2
-
-# Ploting with plotly
-# Transform pandas data frame to dictionary for the plotly visualisation.
-ddMM = go.Heatmap(z=mm.to_numpy().tolist(), x=mm.index, y=mm.columns, hoverongaps=False)
-fig = go.Figure(data=ddMM)
-fig.update_layout(width=1600, height=1600,
-                  title=f"Selection's contacts from chromosome {str(optArgs.chr[0])}",
-                  xaxis_title="Gene names/Coordinates", yaxis_title="Gene names coordinates",
-                  #legend_title="Normalised Contacts",
-                  font=dict(family="Courier New, monospace",
-                            size=14) # color="RebeccaPurple")
-                  )
-fig.update_yaxes(automargin=True)
-fig.update_xaxes(automargin=True)
-plotly.offline.plot(fig, filename=optArgs.outfile, auto_open=False)
+    contacts_OfI_list = []
+    # Get the annotation ines corresponding to the chromosomes
+    for chr1 in contacts.keys():
+        for chr2 in contacts[chr1].keys():
+            if chr1 == chr2:
+                lines = gaExpDf.loc[gaExpDf["Chromosome"]==chr1, :]
+            else:  # The case of inter-chromsomal contacts
+                lines = gaExpDf.loc[(gaExpDf["Chromosome"]==chr1) | (gaExpDf["Chromosome"]==chr2), :]
+            lines.reset_index(inplace=True, drop=True)
+            # Get the corresponding contacts data
+            dfCx = contacts[chr1][chr2]
+            # Generate an emty data frme
+            geneIntContacts = pd.DataFrame(0, index=lines["BinPlot"].values.tolist(), columns=lines["BinPlot"].values.tolist())  # FIXME this need to have a double index for inter-chromosomal contacts.
+            # Populate the geneIntContacts DataFrame
+            for i in range(len(lines)):
+                for j in range(i, len(lines)):
+                    binx = lines["BinPlot"][i]
+                    biny = lines["BinPlot"][j]
+                    # Find the counts for the bins of interest
+                    if (binx, biny) in dfCx.index:
+                        vc = dfCx.loc[(binx, biny)].values[0]
+                        if math.isnan(vc):
+                            vc = 0.0
+                        # Replace the value in the large data frame.
+                        geneIntContacts.at[binx, biny] = vc
+            geneIntContacts = geneIntContacts.replace(0, np.nan)
+            newIndexes = [f"{a}-{int(b/1000):,}Kb" for a, b in zip(lines["Gene_name"], lines["BinPlot"])]
+            geneIntContacts.index = newIndexes
+            geneIntContacts.columns = newIndexes
+            contacts_OfI_list.append(geneIntContacts)
+    return contacts_OfI_list
 
 
 
