@@ -12,8 +12,7 @@ import hicstraw
 
 import pyna_collada as pc
 
-# TODO fix the argument ranges of accepted values from straw.
-# TODO arguments: Add argument for organism.
+# TODO fix the rsolution argument ranges of accepted values from straw
 parser = argparse.ArgumentParser(
     prog="pyna_collada",
     description="Tool to visualise Hi-C contacts from an annotated gene list of interest.",
@@ -118,8 +117,6 @@ ga = pc.parse_annotation(optArgs)
 # Calculate the interaction intervals
 gaExp = pc.expand_gene_annotation_bins(ga, optArgs)
 
-#print(gaExp)
-
 # Extract the contacts data from HiC file
 contacts = {}
 for i in range(len(chromNames)):
@@ -134,21 +131,18 @@ for i in range(len(chromNames)):
         contacts[chrA][chrB] = pc.get_contacts_frame(optArgs, chrA, chrB)
 # TODO the above loops will need to be parallelised for future versions
 
-#print(contacts)
-
 # Main function to populate the data frame
 geneIntContacts = pc.populate_contacts_ofInterest(contacts, gaExp)
 
-#print(geneIntContacts[0])
-
 # Ploting with plotly
-# Transform pandas data frame to dictionary for the plotly visualisation
-ddMM = go.Heatmap(z=geneIntContacts[0].to_numpy().tolist(), x=geneIntContacts[0].index, y=geneIntContacts[0].columns, hoverongaps=False)
-fig = go.Figure(data=ddMM)
-fig.update_layout(width=1200, height=1200,
-                  title=f"Selection's contacts from chromosome {chromNames[0]}",
+fig = go.Figure()
+t1 = pc.matrx_trace(geneIntContacts)
+fig.add_trace(t1)  # Deals only for one matrix of interest fr the moment
+# TODO in later versions 
+fig.update_layout(width=1600, height=1600,
+                  title=f"Selected contacts from chromosome(s): {chromNames}",
                   xaxis_title="Gene name - Coordinates", yaxis_title="Gene name - coordinates",
-                  #legend_title="Normalised Contacts",
+                  legend_title="Contacts",
                   font=dict(family="Droid Sans", size=14)
                   )
 fig.update_yaxes(automargin=True)
