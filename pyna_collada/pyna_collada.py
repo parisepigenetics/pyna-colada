@@ -6,6 +6,8 @@ import numpy as np
 import pandas as pd
 import multiprocessing as mp
 from hicstraw import straw
+import plotly
+import plotly.graph_objects as go
 
 import time    # for timing
 import pprint  # for testing
@@ -167,8 +169,17 @@ def populate_contacts_ofInterest(contacts, gaExpDf):
     return contacts_OfI_list
 
 
+def matrx_trace(moiList, l=0):
+    """Produce the plottly trace from a list of the matrix of contacts of interest.
+
+    """
+    trace = go.Heatmap(z=np.array(moiList[l]), x=moiList[l].columns, y=moiList[l].index,
+                    hoverongaps=False, colorscale="bluered")
+    return trace
+
 
 # Ploting SNS DEPRICATED
+
 # import matplotlib.pyplot as plt
 # import seaborn as sns
 # Setup
