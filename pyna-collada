@@ -137,8 +137,8 @@ geneIntContacts = pc.populate_contacts_ofInterest(contacts, gaExp)
 # Ploting with plotly
 fig = go.Figure()
 t1 = pc.matrx_trace(geneIntContacts)
-fig.add_trace(t1)  # Deals only for one matrix of interest fr the moment
-# TODO in later versions 
+fig.add_trace(t1)  # Deals only for one matrix of interest for the moment
+# TODO in later versions
 fig.update_layout(width=1600, height=1600,
                   title=f"Selected contacts from chromosome(s): {chromNames}",
                   xaxis_title="Gene name - Coordinates", yaxis_title="Gene name - coordinates",
