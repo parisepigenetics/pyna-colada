@@ -5,8 +5,9 @@ import math
 import numpy as np
 import pandas as pd
 import multiprocessing as mp
+# TODO use functools for the expensive computation parts
+#import functools
 from hicstraw import straw
-import plotly
 import plotly.graph_objects as go
 
 import time    # for timing
@@ -38,7 +39,7 @@ def parse_annotation(optArgs):
     # Read and parse the features coordinate file
     ga = pd.read_csv(optArgs.genesAnnot, delimiter='\t', low_memory=False)
     # Setting up the index
-    idx = list(ga.loc[:,"Gene_stable_ID"].values)
+    #idx = list(ga.loc[:,"Gene_stable_ID"].values)
     #ga.index = idx  # No need to change the index perhaps TODO re-check it later in the production
     #ga = ga.drop("Gene_stable_ID", axis=1)
     # TODO do some post-checking for NaNs in strad, chromosome and gene start coords
