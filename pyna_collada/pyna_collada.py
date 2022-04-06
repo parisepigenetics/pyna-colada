@@ -2,16 +2,17 @@
 """
 
 import math
-import numpy as np
-import pandas as pd
-import multiprocessing as mp
-# TODO use functools for the expensive computation parts
-#import functools
-from hicstraw import straw
-import plotly.graph_objects as go
-
 import time    # for timing
 import pprint  # for testing
+#import multiprocessing as mp
+
+import numpy as np
+import pandas as pd
+# TODO use functools for the expensive computation parts
+#import functools
+import plotly.graph_objects as go
+import hicstraw
+
 
 def timing(f):
     """Wrapper to time functions.py
@@ -45,17 +46,17 @@ def parse_annotation(optArgs):
     # TODO do some post-checking for NaNs in strad, chromosome and gene start coords
     # Calculate the overlaping intervals
     # Get the positive strand indexes
-    ipos = ga[ga["Strand"]==1].index.tolist()
+    ipos = ga[ga["Strand"] == 1].index.tolist()
     # Getting the negative strand indexes2
-    ineg = ga[ga["Strand"]==-1].index.tolist()
+    ineg = ga[ga["Strand"] == -1].index.tolist()
     # Calculate the overlaping intervals based on gene start strand and the up- and down- offsets
     ga.loc[ipos, "InterStart"] = ga.loc[ipos, "Gene_start"] - optArgs.offsetU
     ga.loc[ipos, "InterEnd"] = ga.loc[ipos, "Gene_start"] + optArgs.offsetD
     ga.loc[ineg, "InterStart"] = ga.loc[ineg, "Gene_end"] - optArgs.offsetD
     ga.loc[ineg, "InterEnd"] = ga.loc[ineg, "Gene_end"] + optArgs.offsetU
     # Calculate the corresponding interacting bins
-    ga.loc[:,"BinStart"] = round(ga.loc[:,"InterStart"] / optArgs.binSize) * optArgs.binSize
-    ga.loc[:,"BinEnd"] = round(ga.loc[:,"InterEnd"] / optArgs.binSize) * optArgs.binSize
+    ga.loc[:, "BinStart"] = round(ga.loc[:, "InterStart"] / optArgs.binSize) * optArgs.binSize
+    ga.loc[:, "BinEnd"] = round(ga.loc[:, "InterEnd"] / optArgs.binSize) * optArgs.binSize
     # Covert the boundaries to integers
     ga = ga.astype({"InterStart" : int, "InterEnd" : int, "BinStart" : int, "BinEnd" : int})
     # Sort the data frame according to chromosome and interaction region start "InterStart"
@@ -76,11 +77,11 @@ def expand_gene_annotation_bins(gadf, optArgs):
     # Get the chromosomes
     chroms_DFs = []
     chroms = set(gadf["Chromosome"].values.tolist())
-    for chr in chroms:
+    for chrom in chroms:
         # Generate an empty sub-DataFrame for the chromosome
         chrDF = pd.DataFrame()
         # Get the chomosome slice form the original DataFrame
-        gaSlice = gadf.loc[gadf["Chromosome"]==chr, :]
+        gaSlice = gadf.loc[gadf["Chromosome"] == chrom, :]
         # Iterrate over rows
         for i, row in gaSlice.iterrows():
             # Set the condition to generate the expanded rows per gene over an interval
@@ -106,7 +107,7 @@ def get_contacts_frame(optArgs, chrA, chrB):
     :return: A double indexed (chromosomes-/-bins) data frame with the contacts.
     :rtype: pandas.DataFrame
     """
-    res = straw("observed", optArgs.norm, optArgs.hicFile, chrA, chrB, optArgs.type, optArgs.binSize)
+    res = hicstraw.straw("observed", optArgs.norm, optArgs.hicFile, chrA, chrB, optArgs.type, optArgs.binSize)
     # The new API of hicstraw returns a list of contactRecord objects so we extract the bins and counts by list comprehension
     data = [(r.binX, r.binY, r.counts) for r in res]
     cont = "counts_" + chrA + "x" + chrB + "_" + "Norm" + optArgs.norm
@@ -116,15 +117,13 @@ def get_contacts_frame(optArgs, chrA, chrB):
 
 
 def extract_contacts(optArgs, chrA, chromosomes):
-    """The paralelisation wrapper of the contacts extract process.Η μπρο­σού­ρα της Αλε­ξάν­δρα Κολ­λο­ντάι (1872–1952) «Κομ­μου­νι­σμός και Οικο­γέ­νεια» πρω­το­δη­μο­σιεύ­θη­κε το 1920. Το κεί­με­νο που ακο­λου­θεί, μαζί με την Εισα­γω­γή, είναι από την ομώ­νυ­μη μπρο­σού­ρα των εκδό­σε­ων «Λάβα» του 1974, που έχει εξαντληθεί.
-
-
+    """The paralelisation wrapper of the contacts extract process.
 
     Works one chromosome at a time: i.e. it paralelises all the contacts beteen all the chromosome pairs in the user defined list of input.
     """
     # NOT IN USE AS THE TOOL WORKS WITH A SINGLE CHROMOSOME AT A TIME FOR THE moment
     # TODO to be developed as a prrallelisation function IFF the tool is expanded to visualise many cromosomes.
-    pass
+
 
 @timing
 def populate_contacts_ofInterest(contacts, gaExpDf):
@@ -142,9 +141,9 @@ def populate_contacts_ofInterest(contacts, gaExpDf):
     for chr1 in contacts.keys():
         for chr2 in contacts[chr1].keys():
             if chr1 == chr2:
-                lines = gaExpDf.loc[gaExpDf["Chromosome"]==chr1, :]
+                lines = gaExpDf.loc[gaExpDf["Chromosome"] == chr1, :]
             else:  # The case of inter-chromsomal contacts
-                lines = gaExpDf.loc[(gaExpDf["Chromosome"]==chr1) | (gaExpDf["Chromosome"]==chr2), :]
+                lines = gaExpDf.loc[(gaExpDf["Chromosome"] == chr1) | (gaExpDf["Chromosome"] == chr2), :]
             lines.reset_index(inplace=True, drop=True)
             # Get the corresponding contacts data
             dfCx = contacts[chr1][chr2]
@@ -172,10 +171,9 @@ def populate_contacts_ofInterest(contacts, gaExpDf):
 
 def matrx_trace(moiList, l=0):
     """Produce the plottly trace from a list of the matrix of contacts of interest.
-
     """
     trace = go.Heatmap(z=np.array(moiList[l]), x=moiList[l].columns, y=moiList[l].index,
-                    hoverongaps=False, colorscale="bluered")
+                       hoverongaps=False, colorscale="bluered")
     return trace
 
 
