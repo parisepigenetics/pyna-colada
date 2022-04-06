@@ -24,7 +24,7 @@ class CleanCommand(Command):
     def finalize_options(self):
         pass
     def run(self):
-        os.system('rm -vrf ./__pycache__ ./build ./dist ./*.pyc ./*.tgz ./*.egg-info')
+        os.system('rm -vrf ./__pycache__ ./build ./dist ./*.pyc ./*.pyo ./*.tgz ./*.egg-info')
 
 
 setup(
