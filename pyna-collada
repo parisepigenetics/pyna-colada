@@ -103,7 +103,7 @@ optArgs = parser.parse_args()
 hic = hicstraw.HiCFile(optArgs.hicFile)
 # Get a list of chromosome names
 if isinstance(optArgs.chr, int):
-    chromNames =  [hic.getChromosomes()[optArgs.chr].name]
+    chromNames = [hic.getChromosomes()[optArgs.chr].name]
 else:
     chromNames = [hic.getChromosomes()[i].name for i in optArgs.chr]
 # Check resolution consistency
