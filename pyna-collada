@@ -18,23 +18,26 @@ parser = argparse.ArgumentParser(
     description="Tool to visualise Hi-C contacts from an annotated gene list of interest.",
     epilog="Authors: Costas Bouyioukos, 2019-2022, Universite Paris Cite and UMR7216.")
 parser.add_argument(
-    "hicFile",
-    type=str,
-    metavar="hic_file",
-    help="Filename (or path) of .hic file (NO option for STDIN)")
-parser.add_argument(
     "genesAnnot",
     type=str,  #argparse.FileType("r"),
-    metavar="gene_annot_coords_file",
+    metavar="gene_annot_coords",
     help="Filename (or path) of annotation file (usually from ENSEMBL) containing at least the gene name, gene start and end, chromosome and strand")
 parser.add_argument(
     "outfile",
     type=str,
-    metavar="out_file",
+    metavar="output",
     help="Filename (or path) of the results .html figure file (NO option for STDOUT)")
+parser.add_argument(
+    "-x",
+    "--hics",
+    nargs="+",
+    metavar="hic_file(s)",
+    dest="hicFiles",
+    help="Filename(s) (or path(s)) of .hic file(s). One produces single, two a comparison map. Mandatory argument")
 parser.add_argument(
     "-b",
     "--bin-size",
+    nargs="?",
     help="Seelction of the bin size of the hi-c map (i.e. resolution). Default=10000",
     type=int,
     default=10000,
@@ -52,6 +55,7 @@ parser.add_argument(
 parser.add_argument(
     "-d",
     "--downstream-offset",
+    nargs="?",
     type=int,
     default=500,
     help="The number of bps to offset down-stream of TSS for defining the overlaping regions. Default: 500",
@@ -60,6 +64,7 @@ parser.add_argument(
 parser.add_argument(
     "-u",
     "--upstream-offset",
+    nargs="?",
     type=int,
     default=1000,
     help="The number of bps to offset up-stream of TSS for defining the overlaping regions. Default: 1000",
@@ -100,7 +105,7 @@ parser.add_argument(
 optArgs = parser.parse_args()
 
 # Sort out the options selection for chromosomes and resolution by interogating the HiC file
-hic = hicstraw.HiCFile(optArgs.hicFile)
+hic = hicstraw.HiCFile(optArgs.hicFiles[0])
 # Get a list of chromosome names
 if isinstance(optArgs.chr, int):
     chromNames = [hic.getChromosomes()[optArgs.chr].name]
