@@ -65,7 +65,7 @@ def parse_annotation(optArgs):
     return ga
 
 
-def expand_gene_annotation_bins(gadf, optArgs):
+def expand_gene_annotation_bins(gadf, binSize):
     """Expandds the multiple intervals per gene or the multiple genes per interval.
 
     Takes the genee annotation data frame from parse_annotation and expands the intervals such that the many-to-many relations between genes and HiC bins become one-to-one (with mupliple genes per bin if it is necessary).
@@ -90,7 +90,7 @@ def expand_gene_annotation_bins(gadf, optArgs):
                 adds = pd.Series({"BinPlot" : binTemp, "GenePlot" : row["Gene_name"]})
                 newRow = pd.concat([row, adds])
                 chrDF = pd.concat([chrDF, newRow.to_frame().T])
-                binTemp = binTemp + optArgs.binSize
+                binTemp = binTemp + binSize
         chroms_DFs.append(chrDF)
     # Collect all the chromosomes DFs in one
     gaexp = pd.concat(chroms_DFs)
@@ -101,13 +101,13 @@ def expand_gene_annotation_bins(gadf, optArgs):
 
 
 @timing
-def get_contacts_frame(optArgs, chrA, chrB):
-    """Extract the contact matrix from a .hic fle using the straw interface.
+def get_contacts_frame(hicFile, chrA, chrB, optArgs):
+    """Extract the contact matrix from a .hic file using the straw interface.
 
-    :return: A double indexed (chromosomes-/-bins) data frame with the contacts.
+    :return: A double indexed (binX-/-binY) data frame with the contacts.
     :rtype: pandas.DataFrame
     """
-    res = hicstraw.straw("observed", optArgs.norm, optArgs.hicFile, chrA, chrB, optArgs.type, optArgs.binSize)
+    res = hicstraw.straw("observed", optArgs.norm, hicFile, chrA, chrB, optArgs.type, optArgs.binSize)
     # The new API of hicstraw returns a list of contactRecord objects so we extract the bins and counts by list comprehension
     data = [(r.binX, r.binY, r.counts) for r in res]
     cont = "counts_" + chrA + "x" + chrB + "_" + "Norm" + optArgs.norm
