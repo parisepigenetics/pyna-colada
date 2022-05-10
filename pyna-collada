@@ -104,6 +104,9 @@ parser.add_argument(
 # Parse the command line arguments
 optArgs = parser.parse_args()
 
+if len(optArgs.hicFiles) > 2:
+    raise InputError("You must provide only one or two hic files.")
+
 # Sort out the options selection for chromosomes and resolution by interogating the HiC file
 hic = hicstraw.HiCFile(optArgs.hicFiles[0])
 # Get a list of chromosome names
@@ -120,24 +123,31 @@ if optArgs.binSize not in resolutions:
 ga = pc.parse_annotation(optArgs)
 
 # Calculate the interaction intervals
-gaExp = pc.expand_gene_annotation_bins(ga, optArgs)
+gaExp = pc.expand_gene_annotation_bins(ga, optArgs.binSize)
 
 # Extract the contacts data from HiC file
-contacts = {}
+contact_DFs = (0, 0)
 for i in range(len(chromNames)):
     chrA = chromNames[i]
     contacts[chrA] = {}
     if optArgs.inter:  # Get also the inter-chromosomal contacts
+        contacts = {}
         for j in range(i, len(chromNames)):
             chrB = chromNames[j]
             contacts[chrA][chrB] = pc.get_contacts_frame(optArgs, chrA, chrB)
+            # FIXME the comparison for two chromosomes and two hic files.
     else:
         chrB = chrA
-        contacts[chrA][chrB] = pc.get_contacts_frame(optArgs, chrA, chrB)
-# TODO the above loops will need to be parallelised for future versions
+        for i in range(len(optArgs.hicFiles)):  # STRICTLY loop for two times only as the comparisons concerns AT most 2 hic files!
+            contacts = {}
+            contacts[chrA][chrB] = pc.get_contacts_frame(optArgs.hicFiles[i], chrA, chrB, optArgs)
+            contact_DFs[i] = contacts[chrA][chrB]
+# TODO the above loops could be parallelised for future versions
 
-# Main function to populate the data frame
-geneIntContacts = pc.populate_contacts_ofInterest(contacts, gaExp)
+# Populate the data frame(s)
+geneIntContacts = (0, 0)
+
+geneIntContacts = pc.populate_contacts_ofInterest(contact_DFs, gaExp)
 
 # Ploting with plotly
 fig = go.Figure()
