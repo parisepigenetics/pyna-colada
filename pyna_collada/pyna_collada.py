@@ -1,4 +1,4 @@
-"""Modle to facilitate hic contacts extraction and visualisation.
+"""Module to facilitate hic files contacts extraction and visualisation.
 """
 
 import math

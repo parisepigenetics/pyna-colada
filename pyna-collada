@@ -40,7 +40,7 @@ parser.add_argument(
     nargs="?",
     help="Seelction of the bin size of the hi-c map (i.e. resolution). Default=10000",
     type=int,
-    default=10000,
+    default=5000,
     dest="binSize",
     metavar="bin_size")
 parser.add_argument(
@@ -126,10 +126,10 @@ ga = pc.parse_annotation(optArgs)
 gaExp = pc.expand_gene_annotation_bins(ga, optArgs.binSize)
 
 # Extract the contacts data from HiC file
-contact_DFs = (0, 0)
+contact_DFs = [0, 0]
 for i in range(len(chromNames)):
     chrA = chromNames[i]
-    contacts[chrA] = {}
+    #contacts[chrA] = {}
     if optArgs.inter:  # Get also the inter-chromosomal contacts
         contacts = {}
         for j in range(i, len(chromNames)):
@@ -140,14 +140,14 @@ for i in range(len(chromNames)):
         chrB = chrA
         for i in range(len(optArgs.hicFiles)):  # STRICTLY loop for two times only as the comparisons concerns AT most 2 hic files!
             contacts = {}
+            contacts[chrA] = {}
             contacts[chrA][chrB] = pc.get_contacts_frame(optArgs.hicFiles[i], chrA, chrB, optArgs)
-            contact_DFs[i] = contacts[chrA][chrB]
+            contact_DFs[i] = contacts
 # TODO the above loops could be parallelised for future versions
 
 # Populate the data frame(s)
-geneIntContacts = (0, 0)
-
-geneIntContacts = pc.populate_contacts_ofInterest(contact_DFs, gaExp)
+#geneIntContacts = (0, 0)
+geneIntContacts = pc.populate_contacts_ofInterest(contact_DFs[0], gaExp)
 
 # Ploting with plotly
 fig = go.Figure()
